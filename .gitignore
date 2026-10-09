@@ -3,3 +3,4 @@ __pycache__/
 node_modules/
 plugins/danmu/yarn.lock
 plugins/danmu/package-lock.json
+.venv/

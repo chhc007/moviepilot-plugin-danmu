@@ -57,8 +57,9 @@ def _warn_once(key: str, message: str):
 _TITLE_NOISE_PATTERNS = (
     re.compile(r'[(（]\d{4}[)）]'),           # (2025) / （2025）
     re.compile(r'【[^】]*】'),                 # 【国产剧】
-    re.compile(r'\[[^\]]*\]'),                # [bilibili1] 等
-    re.compile(r'\bfrom\b.*$', re.IGNORECASE),  # from iqiyi
+    re.compile(r'\[[^\]]*\]'),                # [bilibili1] 等来源标签
+    re.compile(r'(?i)bilibili\d*'),           # 去掉方括号后残留的 bilibili / BiliBili
+    re.compile(r'(?i)\s*from\s.*$'),          # from iqiyi（中文标题前无空格边界，不能用 \b）
 )
 # 归一化时要去掉的标点/空白
 _TITLE_STRIP_RE = re.compile(r'[\s:：\-_·、,.，。!！?？()（）\[\]【】~～\'"“”‘’/\\|]+')
