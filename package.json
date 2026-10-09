@@ -12,6 +12,7 @@
     "system_version": ">=2.4.5",
     "v2": true,
     "v3": false,
+    "release": true,
     "history": {
       "v1.12.0": "新增数据源选择（dandanplay/danmu_api/hybrid）：A 放宽 /match 判定（isMatched=false 时按标题+集号校验候选，救回日剧）；B 关键词搜索兜底（hash/TMDB 都失败后走 /search/anime，日剧/国创主力）；C 集成 danmu_api 第二数据源（覆盖国剧/欧美剧/韩剧/真人电影/综艺）。新增 danmu_api_url/token/priority 配置项，Vue 按配置矩阵联动显隐；「优先B站」兼容 danmu_api 的 [bilibili1] 来源标签。默认 dandanplay 模式行为与 v1.11.0 完全一致。",
       "v1.11.0": "初始导入：弹幕刮削 v1.11.0（上游 HankunYu/MoviePilot-Plugins plugins.v2/danmu），暂无定制。"
