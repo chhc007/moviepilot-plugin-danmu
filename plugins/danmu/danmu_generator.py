@@ -2106,7 +2106,8 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
                    title: Optional[str] = None, season: Optional[int] = None,
                    data_source: str = "dandanplay", danmu_api_url: Optional[str] = None,
                    danmu_api_token: Optional[str] = None,
-                   danmu_api_priority: bool = False) -> DanmuResult:
+                   danmu_api_priority: bool = False,
+                   dandan_absent: bool = False) -> DanmuResult:
     """
     生成弹幕文件。
 
@@ -2119,13 +2120,19 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
     :param danmu_api_url: danmu_api 服务地址
     :param danmu_api_token: danmu_api TOKEN（空=默认，URL 不带 token 段）
     :param danmu_api_priority: hybrid 模式下 danmu_api 是否优先
+    :param manual_comment_id: 弹弹play 侧已定位的弹幕ID（手动匹配/整季命中）
+    :param dandan_absent: 弹弹play 已确认无收录（整季查询结论），hybrid 下跳过该源
     """
     try:
         comment_id = None
         source = "dandanplay"
 
         def _dandan_lookup() -> Optional[str]:
-            """弹弹play 源：整季/manual 已由上层处理，这里走 /match + TMDB + B 关键词兜底"""
+            """弹弹play 源：manual/整季已由上层定位，这里走 /match + TMDB + B 关键词兜底"""
+            if dandan_absent:
+                return None
+            if manual_comment_id:
+                return manual_comment_id
             return DanmuAPI.get_comment_id(
                 file_path, use_tmdb_id, tmdb_id, episode, tmdb_id_type, title=title)
 
@@ -2134,10 +2141,7 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
             DanmuApiSource.configure(danmu_api_url, danmu_api_token)
             return DanmuApiSource.get_comment_id(title, episode=episode, season=season)
 
-        if manual_comment_id and data_source != "danmu_api":
-            # 手动匹配是弹弹play 的显式用户意图，优先级最高
-            comment_id = manual_comment_id
-        elif data_source == "danmu_api":
+        if data_source == "danmu_api":
             comment_id = _danmu_api_lookup()
             source = "danmu_api"
         elif data_source == "hybrid":

@@ -23,7 +23,7 @@ from app.plugins.danmu import danmu_generator as generator
 
 class Danmu(_PluginBase):
     # 插件名称
-    plugin_name = "弹幕刮削"
+    plugin_name = "弹幕刮削SHIELD专用版"
     # 插件描述
     plugin_desc = "使用弹弹play平台生成弹幕的字幕文件，实现弹幕播放。"
     # 插件图标
@@ -31,7 +31,7 @@ class Danmu(_PluginBase):
     # 主题色
     plugin_color = "#3B5E8E"
     # 插件版本
-    plugin_version = "1.11.0"
+    plugin_version = "1.12.0"
     # 插件作者
     plugin_author = "hankun"
     # 作者主页
@@ -56,6 +56,13 @@ class Danmu(_PluginBase):
     _max_threads = 10
     _onlyFromBili = False
     _useTmdbID = True
+    # 数据源模式：dandanplay（默认，零回归）| danmu_api | hybrid
+    _data_source = "dandanplay"
+    # danmu_api 服务地址与 TOKEN（TOKEN 空=默认，URL 不带 token 段）
+    _danmu_api_url = "http://192.168.123.146:9321"
+    _danmu_api_token = ""
+    # hybrid 模式下 danmu_api 是否优先（默认弹弹play 优先）
+    _danmu_api_priority = False
     _auto_scrape = True
     _screen_area = 'full'  # full(全屏), half(半屏), quarter(1/4屏)
     _enable_strm = True  # 是否启用.strm文件刮削
@@ -437,6 +444,10 @@ class Danmu(_PluginBase):
         self._max_threads = self._clamp_max_threads(config.get("max_threads", 10))
         self._onlyFromBili = config.get("onlyFromBili", False)
         self._useTmdbID = config.get("useTmdbID", True)
+        self._data_source = config.get("data_source", "dandanplay") or "dandanplay"
+        self._danmu_api_url = (config.get("danmu_api_url") or "http://192.168.123.146:9321").rstrip("/")
+        self._danmu_api_token = (config.get("danmu_api_token") or "").strip()
+        self._danmu_api_priority = config.get("danmu_api_priority", False)
         self._auto_scrape = config.get("auto_scrape", False)
         self._enable_retry_task = config.get("enable_retry_task", True)
         self._screen_area = config.get("screen_area", "full")
@@ -651,6 +662,10 @@ class Danmu(_PluginBase):
             "max_threads": self._max_threads,
             "onlyFromBili": self._onlyFromBili,
             "useTmdbID": self._useTmdbID,
+            "data_source": self._data_source,
+            "danmu_api_url": self._danmu_api_url,
+            "danmu_api_token": self._danmu_api_token,
+            "danmu_api_priority": self._danmu_api_priority,
             "auto_scrape": self._auto_scrape,
             "enable_retry_task": self._enable_retry_task,
             "screen_area": self._screen_area,
@@ -738,9 +753,13 @@ class Danmu(_PluginBase):
         tmdb_id_type = 0
         release_date = None
         use_short_cache_ttl = False
-        if self._useTmdbID:
+        media_title = None
+        # danmu_api 靠标题+文件名匹配，即便不用 TMDB 也要做媒体识别拿标题
+        need_recognize = self._useTmdbID or self._data_source != "dandanplay"
+        if need_recognize:
             media_info = self.media_chain.recognize_media(meta=meta)
             if media_info:
+                media_title = media_info.title
                 tmdb_id = media_info.tmdb_id
                 # Matches dandanplay upstream tmdbIdType: 0 = TV series, 1 = movie
                 if media_info.type == MediaType.MOVIE:
@@ -752,19 +771,33 @@ class Danmu(_PluginBase):
                 if self._is_recent_release(release_date):
                     logger.info(f"媒体 {tmdb_id} 是最近90天内发布的内容,使用短缓存")
                     use_short_cache_ttl = True
+        # 标题回退：识别结果 > 文件名（danmu_api / B 关键词兜底都需要）
+        if not media_title:
+            media_title = os.path.splitext(os.path.basename(file_path))[0]
+        if episode is None:
+            episode = self._parse_episode(meta)
+        if season is None:
+            season = getattr(meta, "begin_season", None)
 
-        manual_comment_id = self._resolve_manual_comment_id(file_path, episode)
-        if not manual_comment_id:
-            # 整季查询排在 /match 之前：命中缓存时定位一集是零请求，
-            # 且「这一集在不在列表里」本身就是确定性答案，不必再问服务端。
-            # /match 只在这里解决不了时兜底（拿不到 tmdb_id、集号映射不上）
-            manual_comment_id = self._locate_via_series(
-                tmdb_id, tmdb_id_type, season, episode, release_date, file_path)
-            if manual_comment_id is self._SERIES_ABSENT:
-                absent = generator.DanmuResult("absent", message="弹弹play未收录该内容")
-                # 这条结论同样要落状态库，否则整季查询判出的 absent 反而不会被记住
-                self._record_scrape_state(file_path, absent, release_date)
-                return absent
+        # danmu_api 模式不使用弹弹play 的整季查询（那是弹弹play 的条目体系）
+        dandan_absent = False
+        manual_comment_id = None
+        if self._data_source != "danmu_api":
+            manual_comment_id = self._resolve_manual_comment_id(file_path, episode)
+            if not manual_comment_id:
+                # 整季查询排在 /match 之前：命中缓存时定位一集是零请求，
+                # 且「这一集在不在列表里」本身就是确定性答案，不必再问服务端。
+                # /match 只在这里解决不了时兜底（拿不到 tmdb_id、集号映射不上）
+                manual_comment_id = self._locate_via_series(
+                    tmdb_id, tmdb_id_type, season, episode, release_date, file_path)
+                if manual_comment_id is self._SERIES_ABSENT:
+                    manual_comment_id = None
+                    dandan_absent = True
+                    if self._data_source == "dandanplay":
+                        absent = generator.DanmuResult("absent", message="弹弹play未收录该内容")
+                        # 这条结论同样要落状态库，否则整季查询判出的 absent 反而不会被记住
+                        self._record_scrape_state(file_path, absent, release_date)
+                        return absent
 
         try:
             result = generator.danmu_generator(
@@ -783,7 +816,14 @@ class Danmu(_PluginBase):
                 self._screen_area,
                 manual_comment_id=manual_comment_id,
                 tmdb_id_type=tmdb_id_type,
-                min_danmu_count=self._min_danmu_count
+                min_danmu_count=self._min_danmu_count,
+                title=media_title,
+                season=season,
+                data_source=self._data_source,
+                danmu_api_url=self._danmu_api_url,
+                danmu_api_token=self._danmu_api_token,
+                danmu_api_priority=self._danmu_api_priority,
+                dandan_absent=dandan_absent
             )
             
             # 弹幕数量判断只能用服务端返回的数量（过滤前），
@@ -825,7 +865,7 @@ class Danmu(_PluginBase):
 
     def _render_signature(self) -> Dict[str, Any]:
         """当前影响弹幕文件产出的配置，用于判断存量 .ass 是否需要重新生成"""
-        return {
+        signature = {
             "onlyFromBili": self._onlyFromBili,
             "screen_area": self._screen_area,
             "fontsize": self._fontsize,
@@ -834,6 +874,11 @@ class Danmu(_PluginBase):
             "width": self._width,
             "height": self._height,
         }
+        # 仅在非默认数据源时加入签名：dandanplay 下签名与 v1.11.0 完全一致，
+        # 升级不会让全库重刮（零回归）；切到 danmu_api/hybrid 才触发重生成
+        if self._data_source != "dandanplay":
+            signature["data_source"] = self._data_source
+        return signature
 
     def _load_scrape_state(self):
         """加载状态库；首次运行时从旧的 retry_tasks 配置迁移"""

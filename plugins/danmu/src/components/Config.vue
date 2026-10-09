@@ -20,6 +20,24 @@
             </v-card-title>
             <v-card-text class="px-3 py-2">
               <v-row>
+                <v-col cols="12">
+                  <v-select
+                    v-model="editableConfig.data_source"
+                    label="数据源"
+                    variant="outlined"
+                    :items="[
+                      { title: '弹弹play（默认）', value: 'dandanplay' },
+                      { title: 'danmu_api（扩展源）', value: 'danmu_api' },
+                      { title: '混合（弹弹play + danmu_api）', value: 'hybrid' }
+                    ]"
+                    hint="danmu_api 覆盖国产剧/欧美剧/韩剧/真人电影/综艺；弹弹play 覆盖动画/日剧"
+                    persistent-hint
+                    prepend-inner-icon="mdi-database-sync"
+                    :disabled="saving"
+                    density="compact"
+                    class="text-caption"
+                  ></v-select>
+                </v-col>
                 <v-col cols="12" md="6">
                   <div class="setting-item d-flex align-center py-2">
                     <v-icon icon="mdi-power" size="small" :color="editableConfig.enable ? 'success' : 'grey'" class="mr-3"></v-icon>
@@ -64,7 +82,7 @@
                     </div>
                   </div>
                 </v-col>
-                <v-col cols="12" md="6">
+                <v-col cols="12" md="6" v-if="editableConfig.data_source !== 'danmu_api'">
                   <div class="setting-item d-flex align-center py-2">
                     <v-icon icon="mdi-database" size="small" :color="editableConfig.useTmdbID ? 'info' : 'grey'" class="mr-3"></v-icon>
                     <div class="setting-content flex-grow-1">
@@ -75,6 +93,56 @@
                         </div>
                         <v-switch
                           v-model="editableConfig.useTmdbID"
+                          color="info"
+                          inset
+                          :disabled="saving"
+                          density="compact"
+                          hide-details
+                          class="small-switch"
+                        ></v-switch>
+                      </div>
+                    </div>
+                  </div>
+                </v-col>
+                <v-col cols="12" md="6" v-if="editableConfig.data_source !== 'dandanplay'">
+                  <v-text-field
+                    v-model="editableConfig.danmu_api_url"
+                    label="danmu_api 服务地址"
+                    variant="outlined"
+                    placeholder="http://192.168.123.146:9321"
+                    hint="danmu_api 服务地址，不带 /api 后缀"
+                    persistent-hint
+                    prepend-inner-icon="mdi-server-network"
+                    :disabled="saving"
+                    density="compact"
+                    class="text-caption"
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6" v-if="editableConfig.data_source !== 'dandanplay'">
+                  <v-text-field
+                    v-model="editableConfig.danmu_api_token"
+                    label="danmu_api TOKEN"
+                    variant="outlined"
+                    placeholder="留空使用默认 TOKEN"
+                    hint="自定义 TOKEN，留空则 URL 不带 token 段"
+                    persistent-hint
+                    prepend-inner-icon="mdi-key-variant"
+                    :disabled="saving"
+                    density="compact"
+                    class="text-caption"
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6" v-if="editableConfig.data_source === 'hybrid'">
+                  <div class="setting-item d-flex align-center py-2">
+                    <v-icon icon="mdi-swap-horizontal" size="small" :color="editableConfig.danmu_api_priority ? 'info' : 'grey'" class="mr-3"></v-icon>
+                    <div class="setting-content flex-grow-1">
+                      <div class="d-flex justify-space-between align-center">
+                        <div>
+                          <div class="text-subtitle-2">danmu_api 优先</div>
+                          <div class="text-caption text-grey">开启后先查 danmu_api，未命中再回退弹弹play</div>
+                        </div>
+                        <v-switch
+                          v-model="editableConfig.danmu_api_priority"
                           color="info"
                           inset
                           :disabled="saving"
@@ -139,6 +207,7 @@
                           <div>
                             <div class="text-subtitle-2">启用STRM文件刮削</div>
                             <div class="text-caption text-grey">是否支持.strm流媒体文件的弹幕刮削</div>
+                            <div class="text-caption text-orange" v-if="editableConfig.data_source !== 'dandanplay'">danmu_api 靠文件名匹配，strm 无 TMDB 时也可用</div>
                           </div>
                           <v-tooltip location="top">
                             <template v-slot:activator="{ props }">
@@ -307,7 +376,7 @@
             <v-card-text class="d-flex align-center px-3 py-2">
               <v-icon icon="mdi-information" color="info" class="mr-2" size="small"></v-icon>
               <span class="text-caption">
-                此插件用于生成视频的弹幕字幕文件.弹幕来源为弹弹play平台.
+                此插件用于生成视频的弹幕字幕文件.弹幕来源为弹弹play平台；数据源选择 danmu_api/混合 时可从扩展源补充国剧/欧美/韩剧/真人电影/综艺弹幕.
               </span>
             </v-card-text>
           </v-card>
@@ -365,6 +434,10 @@ const editableConfig = reactive({
   max_threads: 10,
   onlyFromBili: false,
   useTmdbID: true,
+  data_source: 'dandanplay',
+  danmu_api_url: 'http://192.168.123.146:9321',
+  danmu_api_token: '',
+  danmu_api_priority: false,
   auto_scrape: true,
   enable_retry_task: true,
   screen_area: 'full',
@@ -403,6 +476,10 @@ async function loadInitialData() {
         max_threads: data.max_threads,
         onlyFromBili: data.onlyFromBili,
         useTmdbID: data.useTmdbID,
+        data_source: data.data_source,
+        danmu_api_url: data.danmu_api_url,
+        danmu_api_token: data.danmu_api_token,
+        danmu_api_priority: data.danmu_api_priority,
         auto_scrape: data.auto_scrape,
         enable_retry_task: data.enable_retry_task,
         screen_area: data.screen_area,
@@ -430,6 +507,10 @@ async function loadInitialData() {
         max_threads: props.initialConfig.max_threads,
         onlyFromBili: props.initialConfig.onlyFromBili,
         useTmdbID: props.initialConfig.useTmdbID,
+        data_source: props.initialConfig.data_source,
+        danmu_api_url: props.initialConfig.danmu_api_url,
+        danmu_api_token: props.initialConfig.danmu_api_token,
+        danmu_api_priority: props.initialConfig.danmu_api_priority,
         auto_scrape: props.initialConfig.auto_scrape,
         enable_retry_task: props.initialConfig.enable_retry_task,
         screen_area: props.initialConfig.screen_area,
@@ -474,6 +555,10 @@ async function saveFullConfig() {
       max_threads: editableConfig.max_threads,
       onlyFromBili: editableConfig.onlyFromBili,
       useTmdbID: editableConfig.useTmdbID,
+      data_source: editableConfig.data_source,
+      danmu_api_url: editableConfig.danmu_api_url,
+      danmu_api_token: editableConfig.danmu_api_token,
+      danmu_api_priority: editableConfig.danmu_api_priority,
       auto_scrape: editableConfig.auto_scrape,
       enable_retry_task: editableConfig.enable_retry_task,
       screen_area: editableConfig.screen_area,
@@ -518,6 +603,10 @@ function resetConfigToFetched() {
       max_threads: serverFetchedConfig.max_threads,
       onlyFromBili: serverFetchedConfig.onlyFromBili,
       useTmdbID: serverFetchedConfig.useTmdbID,
+      data_source: serverFetchedConfig.data_source,
+      danmu_api_url: serverFetchedConfig.danmu_api_url,
+      danmu_api_token: serverFetchedConfig.danmu_api_token,
+      danmu_api_priority: serverFetchedConfig.danmu_api_priority,
       auto_scrape: serverFetchedConfig.auto_scrape,
       enable_retry_task: serverFetchedConfig.enable_retry_task,
       screen_area: serverFetchedConfig.screen_area,
