@@ -45,6 +45,91 @@ def _warn_once(key: str, message: str):
     logger.warning(message)
 
 
+# ---------------------------------------------------------------------------
+# 标题归一化 / 集号解析 / 弹幕清洗
+#
+# 弹弹play 与 danmu_api 的标题装饰规则不同（danmu_api 会返回
+# `生万物(2025)【国产剧】from iqiyi` 这种带年份/类型/来源的串），
+# A/B/C 三个方案都要先归一化才能做标题比对，所以统一放在这里。
+# ---------------------------------------------------------------------------
+
+# 作品标题里的装饰性片段：年份、类型标签、来源后缀
+_TITLE_NOISE_PATTERNS = (
+    re.compile(r'[(（]\d{4}[)）]'),           # (2025) / （2025）
+    re.compile(r'【[^】]*】'),                 # 【国产剧】
+    re.compile(r'\[[^\]]*\]'),                # [bilibili1] 等
+    re.compile(r'\bfrom\b.*$', re.IGNORECASE),  # from iqiyi
+)
+# 归一化时要去掉的标点/空白
+_TITLE_STRIP_RE = re.compile(r'[\s:：\-_·、,.，。!！?？()（）\[\]【】~～\'"“”‘’/\\|]+')
+# 集号解析模式，按可靠度排序：中文「第N集」> SxxExx > EPxx > _NN
+_EPISODE_PATTERNS = (
+    re.compile(r'第\s*(\d{1,4})\s*[集话話]'),
+    re.compile(r'[Ss](\d{1,2})[Ee](\d{1,4})'),
+    re.compile(r'[Ee][Pp]?\s*(\d{1,4})(?![0-9])'),
+    re.compile(r'[_\-.\s](\d{1,4})(?=[_\-\s]|$)'),
+)
+# danmu_api 弹幕尾部可能混入的点赞标记，如「...♡232」「...🔥1.2w」
+_LIKE_SUFFIX_RE = re.compile(r'\s*[♡🔥][\d.]+\s*[wWkK]?\s*$')
+
+
+def normalize_title(title: Optional[str]) -> str:
+    """
+    归一化作品标题，用于跨源比对。
+
+    剥掉年份/类型标签/来源后缀，再去掉标点与空白并转小写；
+    不做这一步，弹弹play 与 danmu_api 的标题永远无法比较。
+    """
+    if not title:
+        return ""
+    text = str(title)
+    for pattern in _TITLE_NOISE_PATTERNS:
+        text = pattern.sub("", text)
+    return _TITLE_STRIP_RE.sub("", text).lower()
+
+
+def title_score(want: str, got: str) -> float:
+    """
+    归一化标题相似度打分：相等 1.0、互相包含 0.8、否则 0。
+    :param want: 归一化后的目标标题
+    :param got: 归一化后的候选标题
+    """
+    if not want or not got:
+        return 0.0
+    if want == got:
+        return 1.0
+    if want in got or got in want:
+        return 0.8
+    return 0.0
+
+
+def parse_episode_number(text: Optional[str]) -> Optional[int]:
+    """
+    从文本（标题/集标题）中解析集号。
+    支持「第3集」「S01E03」「EP03」「_03」等形式；解析不出返回 None。
+    """
+    if not text:
+        return None
+    for pattern in _EPISODE_PATTERNS:
+        match = pattern.search(str(text))
+        if match:
+            # SxxExx 的集号在第二个分组，其余都在第一个分组
+            value = int(match.group(match.lastindex or 1))
+            if 0 < value <= DanmuAPI.MAX_REGULAR_EPISODE:
+                return value
+    return None
+
+
+def strip_like_suffix(text: Any) -> Any:
+    """
+    剥掉 danmu_api 弹幕文本尾部的点赞标记（如「...♡232」「...🔥1.2w」）。
+    部署端已设 LIKE_SWITCH=false，这里是双保险，避免污染 .ass 文本。
+    """
+    if not text:
+        return text
+    return _LIKE_SUFFIX_RE.sub('', str(text)).rstrip()
+
+
 @dataclass
 class SeriesLookup:
     """整季查询的结局。status: ok / absent / truncated / unknown"""
@@ -704,7 +789,8 @@ class DanmuAPI:
 
     @staticmethod
     def get_comment_id(file_path: str, use_tmdb_id: bool = False, tmdb_id: Optional[int] = None,
-                       episode: Optional[int] = None, tmdb_id_type: int = 0) -> Optional[str]:
+                       episode: Optional[int] = None, tmdb_id_type: int = 0,
+                       title: Optional[str] = None) -> Optional[str]:
         """
         获取弹幕ID。
         注意这一层没有缓存参数：服务端的 /match 与 /search/tmdb 都不接受 TTL，
@@ -714,6 +800,7 @@ class DanmuAPI:
         :param tmdb_id: TMDB ID
         :param episode: 集数
         :param tmdb_id_type: TMDB ID类型，0=电视剧，1=电影
+        :param title: 媒体识别标题（B 方案关键词搜索兜底用，缺省时从文件名回退）
         :return: 弹幕ID
         """
         try:
@@ -783,13 +870,29 @@ class DanmuAPI:
                 )
                 if response is not None and response.status_code == 200:
                     result = response.json()
-                    if result.get("isMatched") and result.get("matches"):
-                        return str(result["matches"][0]["episodeId"])
+                    # A 方案：isMatched=false 时候选列表往往仍有正确条目，
+                    # 用标题+集号校验后采用，避免「哈希库无记录」直接判未收录
+                    if result.get("matches"):
+                        if result.get("isMatched"):
+                            return str(result["matches"][0]["episodeId"])
+                        picked = DanmuAPI._pick_match_candidate(
+                            result["matches"], title, episode)
+                        if picked:
+                            logger.info(f"哈希未精确命中，按标题匹配采用候选: {picked}")
+                            return picked
 
             # 如果使用TMDB ID且提供了TMDB ID，尝试使用TMDB ID匹配
             if use_tmdb_id and tmdb_id is not None:
                 comment_id = DanmuAPI.search_by_tmdb_id(tmdb_id, episode, tmdb_id_type)
                 if comment_id:
+                    return comment_id
+
+            # B 方案：hash 与 TMDB 都未命中时，用标题关键词搜索兜底（日剧/国创主力）
+            keyword_title = title or os.path.splitext(os.path.basename(file_path))[0]
+            if keyword_title:
+                comment_id = DanmuAPI.search_by_keyword(keyword_title, episode)
+                if comment_id:
+                    logger.info(f"关键词搜索兜底命中: {comment_id}")
                     return comment_id
 
             return None
@@ -798,6 +901,92 @@ class DanmuAPI:
         except Exception as e:
             logger.error(f"获取弹幕ID失败: {e}")
             return None
+
+    @classmethod
+    def _pick_match_candidate(cls, matches: List[Dict], title: Optional[str],
+                              episode: Optional[int]) -> Optional[str]:
+        """
+        A 方案：在 /match 候选列表里挑最可信的一条（防误匹配是重点）。
+        规则：
+          - 取候选前 10 条
+          - 标题归一化后 相等(1.0) / 包含(0.8)，低于 0.8 跳过
+          - 集号强校验：候选集标题能解析出集号时必须与本地集号一致，否则否决
+          - 阈值 ≥0.8；同分歧义且指向不同作品 → 放弃（保守）
+        :return: episodeId 字符串；无可信候选返回 None
+        """
+        want = normalize_title(title) if title else ""
+        if not want:
+            return None
+        best: Optional[Dict] = None
+        best_score = 0.0
+        ambiguous = False
+        for item in matches[:10]:
+            score = title_score(want, normalize_title(item.get("animeTitle")))
+            if score < 0.8:
+                continue
+            if episode is not None:
+                candidate_ep = parse_episode_number(item.get("episodeTitle"))
+                if candidate_ep is not None and candidate_ep != int(episode):
+                    continue
+            if score > best_score:
+                best_score, best, ambiguous = score, item, False
+            elif score == best_score and best is not None \
+                    and str(item.get("animeId")) != str(best.get("animeId")):
+                ambiguous = True
+        if best is None or ambiguous:
+            if ambiguous:
+                logger.info("候选同分歧义指向不同作品，放弃采用")
+            return None
+        episode_id = best.get("episodeId")
+        return str(episode_id) if episode_id is not None else None
+
+    @classmethod
+    def search_by_keyword(cls, title: str, episode: Optional[int] = None) -> Optional[str]:
+        """
+        B 方案：关键词搜索兜底（弹弹play /search/anime）。
+        归一化标题匹配（精确 1.0 / 包含 0.85），同分歧义放弃，
+        命中后按 `episodeId = animeId * 10000 + 集号` 复用 _compose_comment_id 拼 ID。
+        :return: 弹幕ID；未命中/歧义返回 None
+        """
+        if not title:
+            return None
+        want = normalize_title(title)
+        if not want:
+            return None
+        try:
+            data = cls.search_anime(title)
+        except DanmuThrottled:
+            raise
+        except Exception as e:
+            logger.error(f"关键词搜索失败: {e}")
+            return None
+        animes = data.get("animes") or []
+        best = None
+        best_score = 0.0
+        ambiguous = False
+        for anime in animes:
+            got = normalize_title(anime.get("animeTitle"))
+            if not got:
+                continue
+            if want == got:
+                score = 1.0
+            elif want in got or got in want:
+                score = 0.85
+            else:
+                continue
+            if score > best_score:
+                best_score, best, ambiguous = score, anime, False
+            elif score == best_score and best is not None \
+                    and str(anime.get("animeId")) != str(best.get("animeId")):
+                ambiguous = True
+        if best is None or ambiguous or best_score < 0.8:
+            if ambiguous:
+                logger.info("关键词搜索结果同分歧义，放弃采用")
+            return None
+        comment_id = cls._compose_comment_id(best.get("animeId"), episode)
+        if comment_id:
+            logger.info(f"关键词搜索命中: {best.get('animeTitle')} -> {comment_id}")
+        return comment_id
 
     @staticmethod
     def get_title_from_nfo(file_path: str) -> Optional[str]:
@@ -863,6 +1052,261 @@ class DanmuAPI:
         except Exception as e:
             logger.error(f"获取弹幕失败: {e}")
             return None
+
+
+class DanmuApiSource:
+    """
+    danmu_api 数据源（第二数据源，覆盖弹弹play 缺失的国剧/欧美剧/韩剧/真人电影/综艺）。
+
+    与弹弹play 中转服务的关键差异（均在实现里处理，避免踩坑）：
+      1. 鉴权：自定义 TOKEN 必须作 URL 首段 `{BASE}/{TOKEN}/api/v2/...`，空则省略
+      2. episodeId 是服务端本地自增计数器，进程重启会漂移 → **不持久化**，现取现用
+      3. 弹幕 `p` 第 4 段是来源标签（[qiyi]/[bilibili1]），不是用户 ID
+      4. animeTitle 带装饰（(年份)【类型】from 源）→ 比对前用 normalize_title 剥壳
+      5. comment 成功响应无 success/errorCode，直接 `{count, comments}`；404 返回 `{count:0}`
+      6. 弹幕 `m` 可能带点赞后缀 → 用 strip_like_suffix 剥离
+    """
+
+    DEFAULT_BASE_URL = "http://192.168.123.146:9321"
+    # (connect, read) 超时，避免线程被挂死
+    TIMEOUT = (10, 60)
+    # 限流兜底退避（部署端通常已关限流，这里只做防御）
+    DEFAULT_RETRY_AFTER = 60
+    MAX_RETRY_AFTER = 3600
+    GATE_WAIT_MAX = 120
+
+    _base_url: str = ""
+    _token: str = ""
+    _session: Optional[requests.Session] = None
+    _session_lock = threading.Lock()
+    _config_lock = threading.Lock()
+
+    @classmethod
+    def configure(cls, base_url: Optional[str] = None, token: Optional[str] = None) -> None:
+        """
+        写入服务地址与 TOKEN。地址去掉尾部斜杠；TOKEN 为空表示走默认（URL 不带 token 段）。
+        """
+        with cls._config_lock:
+            if base_url is not None:
+                cls._base_url = (base_url or "").strip().rstrip("/")
+            if token is not None:
+                cls._token = (token or "").strip()
+
+    @classmethod
+    def _api_base(cls) -> str:
+        """拼接 API 前缀：{BASE}[/{TOKEN}]/api/v2"""
+        base = (cls._base_url or cls.DEFAULT_BASE_URL).rstrip("/")
+        if cls._token:
+            return f"{base}/{cls._token}/api/v2"
+        return f"{base}/api/v2"
+
+    @classmethod
+    def _get_session(cls) -> requests.Session:
+        if cls._session is None:
+            with cls._session_lock:
+                if cls._session is None:
+                    cls._session = requests.Session()
+        return cls._session
+
+    @classmethod
+    def _request(cls, method: str, path: str, *, json_body: Optional[Dict] = None,
+                 params: Optional[Dict] = None) -> Optional[requests.Response]:
+        """
+        danmu_api 的唯一请求入口。
+        :return: 响应对象；网络异常返回 None
+        :raises DanmuThrottled: 服务端限流（429/503）
+        """
+        url = cls._api_base() + path
+        # User-Agent 复用弹弹侧（含插件版本），避免版本号多处手工同步
+        headers = DanmuAPI.HEADERS
+        for attempt in range(2):
+            try:
+                response = cls._get_session().request(
+                    method, url, json=json_body, params=params,
+                    headers=headers, timeout=cls.TIMEOUT
+                )
+            except requests.RequestException as e:
+                logger.error(f"请求 danmu_api 失败 {url}: {e}")
+                return None
+            if response.status_code not in (429, 503):
+                return response
+            retry_after = DanmuAPI._parse_retry_after(response)
+            logger.warning(
+                f"danmu_api 返回 {response.status_code}，{retry_after:.0f} 秒后重试: {url}"
+            )
+            if attempt == 0 and retry_after <= cls.GATE_WAIT_MAX:
+                time.sleep(retry_after)
+                continue
+            raise DanmuThrottled(retry_after, response.status_code)
+        return None
+
+    # ---- 匹配管线 --------------------------------------------------------
+
+    @staticmethod
+    def _build_file_name(title: str, season: Optional[int], episode: Optional[int]) -> str:
+        """构造 /match 的 fileName：`{标题} S{季}E{集}`；无集号（电影）时只用标题"""
+        if episode is None:
+            return str(title)
+        try:
+            ep = int(episode)
+        except (TypeError, ValueError):
+            return str(title)
+        try:
+            se = int(season) if season is not None else 1
+        except (TypeError, ValueError):
+            se = 1
+        return f"{title} S{se:02d}E{ep:02d}"
+
+    @classmethod
+    def match(cls, file_name: str, title: Optional[str] = None,
+              episode: Optional[int] = None) -> Optional[str]:
+        """
+        POST /api/v2/match 主入口（服务端已做多源择优）。
+        :return: episodeId 字符串；未命中返回 None
+        """
+        response = cls._request("POST", "/match", json_body={"fileName": file_name})
+        if response is None or response.status_code != 200:
+            return None
+        try:
+            result = response.json()
+        except ValueError:
+            logger.error("danmu_api /match 返回非 JSON")
+            return None
+        matches = result.get("matches") or []
+        if not matches:
+            return None
+        if result.get("isMatched"):
+            episode_id = matches[0].get("episodeId")
+            return str(episode_id) if episode_id is not None else None
+        # isMatched=false：服务端未精确命中，但候选仍可能正确，按标题+集号校验（A 方案同思路）
+        return cls._pick_match_candidate(matches, title, episode)
+
+    @classmethod
+    def _pick_match_candidate(cls, matches: List[Dict], title: Optional[str],
+                              episode: Optional[int]) -> Optional[str]:
+        """
+        在 /match 候选里挑最可信的一条（防误匹配）。
+        规则：标题归一化后相等(1.0)/包含(0.8)；集号能解析时必须与本地一致；
+              同分歧义指向不同作品 → 放弃。
+        """
+        want = normalize_title(title) if title else ""
+        best: Optional[Dict] = None
+        best_score = 0.0
+        ambiguous = False
+        for item in matches[:10]:
+            score = title_score(want, normalize_title(item.get("animeTitle")))
+            if score < 0.8:
+                continue
+            # 集号强校验：候选集标题能解析出集号时，必须与本地集号一致
+            if episode is not None:
+                candidate_ep = parse_episode_number(item.get("episodeTitle"))
+                if candidate_ep is not None and candidate_ep != int(episode):
+                    continue
+            if score > best_score:
+                best_score, best, ambiguous = score, item, False
+            elif score == best_score and best is not None \
+                    and str(item.get("animeId")) != str(best.get("animeId")):
+                ambiguous = True
+        if best is None or ambiguous:
+            if ambiguous:
+                logger.info("danmu_api /match 候选同分歧义，放弃采用")
+            return None
+        episode_id = best.get("episodeId")
+        if episode_id is None:
+            return None
+        logger.info(f"danmu_api /match 未精确命中，按标题+集号采用候选: {episode_id}")
+        return str(episode_id)
+
+    @classmethod
+    def _locate_via_search(cls, title: str, episode: Optional[int]) -> Optional[str]:
+        """
+        兜底：GET /api/v2/search/episodes?anime={title}。
+        search/episodes 响应无 episodeNumber，集号只能从 episodeTitle 解析。
+        """
+        response = cls._request("GET", "/search/episodes", params={"anime": title})
+        if response is None or response.status_code != 200:
+            return None
+        try:
+            result = response.json()
+        except ValueError:
+            return None
+        want = normalize_title(title)
+        best: Optional[Dict] = None
+        best_score = 0.0
+        ambiguous = False
+        for anime in (result.get("animes") or [])[:10]:
+            score = title_score(want, normalize_title(anime.get("animeTitle")))
+            if score < 0.8:
+                continue
+            if score > best_score:
+                best_score, best, ambiguous = score, anime, False
+            elif score == best_score and best is not None:
+                ambiguous = True
+        if best is None or ambiguous:
+            return None
+        episodes = best.get("episodes") or []
+        if not episodes:
+            return None
+        if episode is None:
+            # 电影/单条目作品：取第一条
+            episode_id = episodes[0].get("episodeId")
+            return str(episode_id) if episode_id is not None else None
+        for item in episodes:
+            if parse_episode_number(item.get("episodeTitle")) == int(episode):
+                episode_id = item.get("episodeId")
+                if episode_id is not None:
+                    logger.info(f"danmu_api search/episodes 命中第 {episode} 集: {episode_id}")
+                    return str(episode_id)
+        return None
+
+    @classmethod
+    def get_comment_id(cls, title: Optional[str], episode: Optional[int] = None,
+                       season: Optional[int] = None) -> Optional[str]:
+        """
+        danmu_api 的弹幕 ID 定位（多层兜底）。
+        :return: episodeId 字符串；未收录返回 None
+        :raises DanmuThrottled: 被服务端限流
+        """
+        if not title:
+            return None
+        # 1) /match 主入口（服务端择优，最可靠）
+        comment_id = cls.match(
+            cls._build_file_name(title, season, episode), title=title, episode=episode)
+        if comment_id:
+            return comment_id
+        # 2) 中文集号变体（部分源按「第N集」命名）
+        if episode is not None:
+            comment_id = cls.match(
+                f"{title} 第{int(episode)}集", title=title, episode=episode)
+            if comment_id:
+                return comment_id
+        # 3) search/episodes 兜底
+        return cls._locate_via_search(title, episode)
+
+    @classmethod
+    def get_comments(cls, episode_id: Any) -> Optional[Dict]:
+        """
+        获取弹幕正文。返回结构与弹弹play 对齐（含 comments 列表），便于下游复用。
+        注意：p 第 4 段是来源标签、m 可能带点赞后缀，清洗在 danmu_generator 层统一做。
+        """
+        response = cls._request("GET", f"/comment/{episode_id}", params={"format": "json"})
+        if response is None:
+            return None
+        if response.status_code == 404:
+            # 不存在的集：服务端返回 {count:0, comments:[]}
+            return {"count": 0, "comments": []}
+        if response.status_code != 200:
+            logger.error(f"danmu_api 获取弹幕失败 HTTP {response.status_code}: {response.text[:200]}")
+            return None
+        try:
+            result = response.json()
+        except ValueError:
+            logger.error("danmu_api /comment 返回非 JSON")
+            return None
+        if not isinstance(result.get("comments"), list):
+            result["comments"] = []
+        return result
+
 
 class DanmuConverter:
     @staticmethod
@@ -1620,10 +2064,15 @@ def _comment_timeline(comment: Any) -> float:
 
 def _is_bili_comment(comment: Any) -> bool:
     """
-    判断弹幕是否来自B站（用户字段带[BiliBili]标记）
+    判断弹幕是否来自B站。
+
+    两个数据源的来源标记写法不同，必须都认：
+      - 弹弹play：用户字段带 [BiliBili] 标记
+      - danmu_api：p 第 4 段是来源标签，B站写作 [bilibili1]（多源合并如 [bilibili1&dandan]）
+    统一按大小写不敏感的 'bilibili' 子串判定。
     """
     fields = _comment_fields(comment)
-    return len(fields) > 3 and '[BiliBili]' in fields[3]
+    return len(fields) > 3 and 'bilibili' in fields[3].lower()
 
 
 def _prefer_bili_comments(comments: List[Dict], min_count: int) -> List[Dict]:
@@ -1653,17 +2102,75 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
                    use_tmdb_id: bool = False, tmdb_id: Optional[int] = None,
                    episode: Optional[int] = None, cache_ttl: Optional[int] = None,
                    screen_area: str = 'full', manual_comment_id: Optional[str] = None,
-                   tmdb_id_type: int = 0, min_danmu_count: int = 100) -> DanmuResult:
-    try:
-        comment_id = manual_comment_id or DanmuAPI.get_comment_id(
-            file_path, use_tmdb_id, tmdb_id, episode, tmdb_id_type
-        )
-        if not comment_id:
-            # 问过了，弹弹play 没有这个内容。这不是失败，重试也不会变
-            logger.info(f"弹弹play未收录该内容 - {file_path}")
-            return DanmuResult("absent", message="弹弹play未收录该内容")
+                   tmdb_id_type: int = 0, min_danmu_count: int = 100,
+                   title: Optional[str] = None, season: Optional[int] = None,
+                   data_source: str = "dandanplay", danmu_api_url: Optional[str] = None,
+                   danmu_api_token: Optional[str] = None,
+                   danmu_api_priority: bool = False) -> DanmuResult:
+    """
+    生成弹幕文件。
 
-        comments_data = DanmuAPI.get_comments(comment_id, cache_ttl=cache_ttl)
+    :param data_source: 数据源模式
+        - "dandanplay"（默认）：行为与 v1.11.0 完全一致
+        - "danmu_api"：直接走 danmu_api（跳过整季查询/TMDB 匹配）
+        - "hybrid"：弹弹play 全套失败后走 danmu_api；danmu_api_priority=True 时反序
+    :param title: 媒体识别标题，danmu_api / B 方案关键词兜底用（缺省回退文件名）
+    :param season: 季号，danmu_api /match 构造文件名用
+    :param danmu_api_url: danmu_api 服务地址
+    :param danmu_api_token: danmu_api TOKEN（空=默认，URL 不带 token 段）
+    :param danmu_api_priority: hybrid 模式下 danmu_api 是否优先
+    """
+    try:
+        comment_id = None
+        source = "dandanplay"
+
+        def _dandan_lookup() -> Optional[str]:
+            """弹弹play 源：整季/manual 已由上层处理，这里走 /match + TMDB + B 关键词兜底"""
+            return DanmuAPI.get_comment_id(
+                file_path, use_tmdb_id, tmdb_id, episode, tmdb_id_type, title=title)
+
+        def _danmu_api_lookup() -> Optional[str]:
+            """danmu_api 源：episodeId 现取现用，不持久化"""
+            DanmuApiSource.configure(danmu_api_url, danmu_api_token)
+            return DanmuApiSource.get_comment_id(title, episode=episode, season=season)
+
+        if manual_comment_id and data_source != "danmu_api":
+            # 手动匹配是弹弹play 的显式用户意图，优先级最高
+            comment_id = manual_comment_id
+        elif data_source == "danmu_api":
+            comment_id = _danmu_api_lookup()
+            source = "danmu_api"
+        elif data_source == "hybrid":
+            order = ([("danmu_api", _danmu_api_lookup), ("dandanplay", _dandan_lookup)]
+                     if danmu_api_priority else
+                     [("dandanplay", _dandan_lookup), ("danmu_api", _danmu_api_lookup)])
+            for name, lookup in order:
+                try:
+                    comment_id = lookup()
+                except DanmuUnresolvable as e:
+                    # 该源条件不满足（如 .strm 无 TMDB），换下一个源而不是放弃
+                    logger.info(f"{name} 无法匹配，尝试下一个数据源: {e}")
+                    comment_id = None
+                if comment_id:
+                    source = name
+                    break
+        else:
+            comment_id = _dandan_lookup()
+
+        if not comment_id:
+            if data_source == "danmu_api":
+                msg = "danmu_api未收录该内容"
+            elif data_source == "hybrid":
+                msg = "弹弹play 与 danmu_api 均未收录该内容"
+            else:
+                msg = "弹弹play未收录该内容"
+            logger.info(f"{msg} - {file_path}")
+            return DanmuResult("absent", message=msg)
+
+        if source == "danmu_api":
+            comments_data = DanmuApiSource.get_comments(comment_id)
+        else:
+            comments_data = DanmuAPI.get_comments(comment_id, cache_ttl=cache_ttl)
         if not comments_data:
             return DanmuResult("failed", message="未获取到弹幕数据", comment_id=comment_id)
 
@@ -1673,6 +2180,10 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
             return DanmuResult("failed", message="弹幕数据格式异常", comment_id=comment_id)
 
         comments = sorted(raw_comments, key=_comment_timeline)
+        # danmu_api 的 m 可能带点赞后缀（弹弹play 无此问题，剥离是幂等的）
+        for comment in comments:
+            if isinstance(comment, dict):
+                comment["m"] = strip_like_suffix(comment.get("m"))
         server_count = len(comments)
 
         if server_count == 0:
