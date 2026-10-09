@@ -1,0 +1,19 @@
+{
+  "Danmu": {
+    "name": "弹幕刮削SHIELD专用版",
+    "description": "弹幕刮削SHIELD专用版：使用弹弹play平台生成弹幕字幕文件（.danmu.ass / 与原生字幕合并的 .withDanmu.ass），实现不支持弹幕播放的设备也能看弹幕。支持屏幕区域选择、.strm 流媒体文件、整季零请求定位。定制维护版由 chhc007 基于 hankun 上游维护，官方更新时合并代码。",
+    "labels": "弹幕,弹弹play,字幕,媒体库",
+    "version": "1.11.0",
+    "icon": "https://raw.githubusercontent.com/HankunYu/MoviePilot-Plugins/main/icons/danmu.png",
+    "color": "#3B5E8E",
+    "author": "hankun, chhc007",
+    "author_url": "https://github.com/chhc007",
+    "level": 1,
+    "system_version": ">=2.4.5",
+    "v2": true,
+    "v3": false,
+    "history": {
+      "v1.11.0": "初始导入：弹幕刮削 v1.11.0（上游 HankunYu/MoviePilot-Plugins plugins.v2/danmu），暂无定制。"
+    }
+  }
+}
