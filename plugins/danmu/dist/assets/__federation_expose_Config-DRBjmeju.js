@@ -84,8 +84,16 @@ const editableConfig = reactive({
   auto_scrape: true,
   enable_retry_task: true,
   screen_area: 'full',
+  max_same_screen: 0,
   enable_strm: true
 });
+
+// 同屏弹幕上限归一化：0=不限制，其余取非负整数（与后端 _clamp_max_same_screen 对齐）
+function normalizeMaxSameScreen(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
 
 const getPluginId = () => {
   return "Danmu";
@@ -124,6 +132,7 @@ async function loadInitialData() {
         auto_scrape: data.auto_scrape,
         enable_retry_task: data.enable_retry_task,
         screen_area: data.screen_area,
+        max_same_screen: normalizeMaxSameScreen(data.max_same_screen),
         enable_strm: data.enable_strm
       });
       initialConfigLoaded.value = true;
@@ -155,6 +164,7 @@ async function loadInitialData() {
         auto_scrape: props.initialConfig.auto_scrape,
         enable_retry_task: props.initialConfig.enable_retry_task,
         screen_area: props.initialConfig.screen_area,
+        max_same_screen: normalizeMaxSameScreen(props.initialConfig.max_same_screen),
         enable_strm: props.initialConfig.enable_strm
       });
     }
@@ -201,6 +211,7 @@ async function saveFullConfig() {
       auto_scrape: editableConfig.auto_scrape,
       enable_retry_task: editableConfig.enable_retry_task,
       screen_area: editableConfig.screen_area,
+      max_same_screen: normalizeMaxSameScreen(editableConfig.max_same_screen),
       enable_strm: editableConfig.enable_strm
     };
 
@@ -249,6 +260,7 @@ function resetConfigToFetched() {
       auto_scrape: serverFetchedConfig.auto_scrape,
       enable_retry_task: serverFetchedConfig.enable_retry_task,
       screen_area: serverFetchedConfig.screen_area,
+      max_same_screen: normalizeMaxSameScreen(serverFetchedConfig.max_same_screen),
       enable_strm: serverFetchedConfig.enable_strm
     });
     error.value = null;
@@ -278,6 +290,7 @@ onMounted(() => {
       auto_scrape: props.initialConfig.auto_scrape,
       enable_retry_task: props.initialConfig.enable_retry_task,
       screen_area: props.initialConfig.screen_area,
+      max_same_screen: normalizeMaxSameScreen(props.initialConfig.max_same_screen),
       enable_strm: props.initialConfig.enable_strm
     });
   }
@@ -317,7 +330,7 @@ return (_ctx, _cache) => {
               color: "primary",
               size: "small"
             }),
-            _cache[19] || (_cache[19] = _createElementVNode("span", null, "弹幕刮削配置", -1))
+            _cache[20] || (_cache[20] = _createElementVNode("span", null, "弹幕刮削配置", -1))
           ]),
           _: 1
         }),
@@ -357,7 +370,7 @@ return (_ctx, _cache) => {
               ref_key: "form",
               ref: form,
               modelValue: isFormValid.value,
-              "onUpdate:modelValue": _cache[16] || (_cache[16] = $event => ((isFormValid).value = $event)),
+              "onUpdate:modelValue": _cache[17] || (_cache[17] = $event => ((isFormValid).value = $event)),
               onSubmit: _withModifiers(saveFullConfig, ["prevent"])
             }, {
               default: _withCtx(() => [
@@ -374,7 +387,7 @@ return (_ctx, _cache) => {
                           color: "primary",
                           size: "small"
                         }),
-                        _cache[20] || (_cache[20] = _createElementVNode("span", null, "基本设置", -1))
+                        _cache[21] || (_cache[21] = _createElementVNode("span", null, "基本设置", -1))
                       ]),
                       _: 1
                     }),
@@ -418,7 +431,7 @@ return (_ctx, _cache) => {
                                   }, null, 8, ["color"]),
                                   _createElementVNode("div", _hoisted_3, [
                                     _createElementVNode("div", _hoisted_4, [
-                                      _cache[21] || (_cache[21] = _createElementVNode("div", null, [
+                                      _cache[22] || (_cache[22] = _createElementVNode("div", null, [
                                         _createElementVNode("div", { class: "text-subtitle-2" }, "启用插件"),
                                         _createElementVNode("div", { class: "text-caption text-grey" }, "是否启用弹幕刮削功能")
                                       ], -1)),
@@ -452,7 +465,7 @@ return (_ctx, _cache) => {
                                   }, null, 8, ["color"]),
                                   _createElementVNode("div", _hoisted_6, [
                                     _createElementVNode("div", _hoisted_7, [
-                                      _cache[22] || (_cache[22] = _createElementVNode("div", null, [
+                                      _cache[23] || (_cache[23] = _createElementVNode("div", null, [
                                         _createElementVNode("div", { class: "text-subtitle-2" }, "优先使用B站弹幕"),
                                         _createElementVNode("div", { class: "text-caption text-grey" }, "B站弹幕不足时自动回退全部来源")
                                       ], -1)),
@@ -488,7 +501,7 @@ return (_ctx, _cache) => {
                                       }, null, 8, ["color"]),
                                       _createElementVNode("div", _hoisted_9, [
                                         _createElementVNode("div", _hoisted_10, [
-                                          _cache[23] || (_cache[23] = _createElementVNode("div", null, [
+                                          _cache[24] || (_cache[24] = _createElementVNode("div", null, [
                                             _createElementVNode("div", { class: "text-subtitle-2" }, "使用TMDB ID"),
                                             _createElementVNode("div", { class: "text-caption text-grey" }, "是否使用TMDB ID进行匹配")
                                           ], -1)),
@@ -573,7 +586,7 @@ return (_ctx, _cache) => {
                                       }, null, 8, ["color"]),
                                       _createElementVNode("div", _hoisted_12, [
                                         _createElementVNode("div", _hoisted_13, [
-                                          _cache[24] || (_cache[24] = _createElementVNode("div", null, [
+                                          _cache[25] || (_cache[25] = _createElementVNode("div", null, [
                                             _createElementVNode("div", { class: "text-subtitle-2" }, "danmu_api 优先"),
                                             _createElementVNode("div", { class: "text-caption text-grey" }, "开启后先查 danmu_api，未命中再回退弹弹play")
                                           ], -1)),
@@ -608,7 +621,7 @@ return (_ctx, _cache) => {
                                   }, null, 8, ["color"]),
                                   _createElementVNode("div", _hoisted_15, [
                                     _createElementVNode("div", _hoisted_16, [
-                                      _cache[25] || (_cache[25] = _createElementVNode("div", null, [
+                                      _cache[26] || (_cache[26] = _createElementVNode("div", null, [
                                         _createElementVNode("div", { class: "text-subtitle-2" }, "入库自动刮削"),
                                         _createElementVNode("div", { class: "text-caption text-grey" }, "是否在媒体入库时自动刮削弹幕")
                                       ], -1)),
@@ -642,7 +655,7 @@ return (_ctx, _cache) => {
                                   }, null, 8, ["color"]),
                                   _createElementVNode("div", _hoisted_18, [
                                     _createElementVNode("div", _hoisted_19, [
-                                      _cache[26] || (_cache[26] = _createElementVNode("div", null, [
+                                      _cache[27] || (_cache[27] = _createElementVNode("div", null, [
                                         _createElementVNode("div", { class: "text-subtitle-2" }, "启用重试任务"),
                                         _createElementVNode("div", { class: "text-caption text-grey" }, "弹幕数量不足时自动加入重试列表")
                                       ], -1)),
@@ -678,8 +691,8 @@ return (_ctx, _cache) => {
                                     _createElementVNode("div", _hoisted_22, [
                                       _createElementVNode("div", _hoisted_23, [
                                         _createElementVNode("div", null, [
-                                          _cache[27] || (_cache[27] = _createElementVNode("div", { class: "text-subtitle-2" }, "启用STRM文件刮削", -1)),
-                                          _cache[28] || (_cache[28] = _createElementVNode("div", { class: "text-caption text-grey" }, "是否支持.strm流媒体文件的弹幕刮削", -1)),
+                                          _cache[28] || (_cache[28] = _createElementVNode("div", { class: "text-subtitle-2" }, "启用STRM文件刮削", -1)),
+                                          _cache[29] || (_cache[29] = _createElementVNode("div", { class: "text-caption text-grey" }, "是否支持.strm流媒体文件的弹幕刮削", -1)),
                                           (editableConfig.data_source !== 'dandanplay')
                                             ? (_openBlock(), _createElementBlock("div", _hoisted_24, "danmu_api 靠文件名匹配，strm 无 TMDB 时也可用"))
                                             : _createCommentVNode("", true)
@@ -695,7 +708,7 @@ return (_ctx, _cache) => {
                                             }), null, 16)
                                           ]),
                                           default: _withCtx(() => [
-                                            _cache[29] || (_cache[29] = _createElementVNode("div", { class: "tooltip-content" }, [
+                                            _cache[30] || (_cache[30] = _createElementVNode("div", { class: "tooltip-content" }, [
                                               _createElementVNode("div", { class: "text-subtitle-2 mb-1" }, "STRM文件刮削说明"),
                                               _createElementVNode("div", { class: "text-caption" }, [
                                                 _createElementVNode("div", { class: "mb-1" }, [
@@ -754,7 +767,7 @@ return (_ctx, _cache) => {
                           color: "primary",
                           size: "small"
                         }),
-                        _cache[30] || (_cache[30] = _createElementVNode("span", null, "弹幕参数设置", -1))
+                        _cache[31] || (_cache[31] = _createElementVNode("span", null, "弹幕参数设置", -1))
                       ]),
                       _: 1
                     }),
@@ -867,8 +880,32 @@ return (_ctx, _cache) => {
                             }, {
                               default: _withCtx(() => [
                                 _createVNode(_component_v_text_field, {
+                                  modelValue: editableConfig.max_same_screen,
+                                  "onUpdate:modelValue": _cache[14] || (_cache[14] = $event => ((editableConfig.max_same_screen) = $event)),
+                                  modelModifiers: { number: true },
+                                  label: "同屏弹幕上限",
+                                  type: "number",
+                                  variant: "outlined",
+                                  min: 0,
+                                  rules: [v => (v === '' || v === null || (Number.isInteger(Number(v)) && Number(v) >= 0)) || '必须为 0 或正整数'],
+                                  hint: "0=不限制；建议 10~30，降低同屏密度可显著改善播放流畅度",
+                                  "persistent-hint": "",
+                                  "prepend-inner-icon": "mdi-layers-triple-outline",
+                                  disabled: saving.value,
+                                  density: "compact",
+                                  class: "text-caption"
+                                }, null, 8, ["modelValue", "rules", "disabled"])
+                              ]),
+                              _: 1
+                            }),
+                            _createVNode(_component_v_col, {
+                              cols: "12",
+                              md: "6"
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_v_text_field, {
                                   modelValue: editableConfig.max_threads,
-                                  "onUpdate:modelValue": _cache[14] || (_cache[14] = $event => ((editableConfig.max_threads) = $event)),
+                                  "onUpdate:modelValue": _cache[15] || (_cache[15] = $event => ((editableConfig.max_threads) = $event)),
                                   modelModifiers: { number: true },
                                   label: "刮削并发数",
                                   type: "number",
@@ -908,7 +945,7 @@ return (_ctx, _cache) => {
                           color: "primary",
                           size: "small"
                         }),
-                        _cache[31] || (_cache[31] = _createElementVNode("span", null, "手动控制媒体库路径", -1))
+                        _cache[32] || (_cache[32] = _createElementVNode("span", null, "手动控制媒体库路径", -1))
                       ]),
                       _: 1
                     }),
@@ -916,7 +953,7 @@ return (_ctx, _cache) => {
                       default: _withCtx(() => [
                         _createVNode(_component_v_textarea, {
                           modelValue: editableConfig.path,
-                          "onUpdate:modelValue": _cache[15] || (_cache[15] = $event => ((editableConfig.path) = $event)),
+                          "onUpdate:modelValue": _cache[16] || (_cache[16] = $event => ((editableConfig.path) = $event)),
                           label: "/",
                           variant: "outlined",
                           hint: "每行一个路径,在状态页手动控制刮削",
@@ -946,7 +983,7 @@ return (_ctx, _cache) => {
                           class: "mr-2",
                           size: "small"
                         }),
-                        _cache[32] || (_cache[32] = _createElementVNode("span", { class: "text-caption" }, " 此插件用于生成视频的弹幕字幕文件.弹幕来源为弹弹play平台；数据源选择 danmu_api/混合 时可从扩展源补充国剧/欧美/韩剧/真人电影/综艺弹幕. ", -1))
+                        _cache[33] || (_cache[33] = _createElementVNode("span", { class: "text-caption" }, " 此插件用于生成视频的弹幕字幕文件.弹幕来源为弹弹play平台；数据源选择 danmu_api/混合 时可从扩展源补充国剧/欧美/韩剧/真人电影/综艺弹幕. ", -1))
                       ]),
                       _: 1
                     })
@@ -964,13 +1001,13 @@ return (_ctx, _cache) => {
           default: _withCtx(() => [
             _createVNode(_component_v_btn, {
               color: "info",
-              onClick: _cache[17] || (_cache[17] = $event => (emit('switch'))),
+              onClick: _cache[18] || (_cache[18] = $event => (emit('switch'))),
               "prepend-icon": "mdi-view-dashboard",
               disabled: saving.value,
               variant: "text",
               size: "small"
             }, {
-              default: _withCtx(() => _cache[33] || (_cache[33] = [
+              default: _withCtx(() => _cache[34] || (_cache[34] = [
                 _createTextVNode("状态页")
               ])),
               _: 1
@@ -984,7 +1021,7 @@ return (_ctx, _cache) => {
               "prepend-icon": "mdi-restore",
               size: "small"
             }, {
-              default: _withCtx(() => _cache[34] || (_cache[34] = [
+              default: _withCtx(() => _cache[35] || (_cache[35] = [
                 _createTextVNode("重置")
               ])),
               _: 1
@@ -998,20 +1035,20 @@ return (_ctx, _cache) => {
               variant: "text",
               size: "small"
             }, {
-              default: _withCtx(() => _cache[35] || (_cache[35] = [
+              default: _withCtx(() => _cache[36] || (_cache[36] = [
                 _createTextVNode("保存配置")
               ])),
               _: 1
             }, 8, ["disabled", "loading"]),
             _createVNode(_component_v_btn, {
               color: "grey",
-              onClick: _cache[18] || (_cache[18] = $event => (emit('close'))),
+              onClick: _cache[19] || (_cache[19] = $event => (emit('close'))),
               "prepend-icon": "mdi-close",
               disabled: saving.value,
               variant: "text",
               size: "small"
             }, {
-              default: _withCtx(() => _cache[36] || (_cache[36] = [
+              default: _withCtx(() => _cache[37] || (_cache[37] = [
                 _createTextVNode("关闭")
               ])),
               _: 1
@@ -1027,6 +1064,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-9bdf63bc"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-0eb8f9ad"]]);
 
 export { Config as default };

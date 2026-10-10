@@ -330,6 +330,22 @@
                 </v-col>
                 <v-col cols="12" md="6">
                   <v-text-field
+                    v-model.number="editableConfig.max_same_screen"
+                    label="同屏弹幕上限"
+                    type="number"
+                    variant="outlined"
+                    :min="0"
+                    :rules="[v => (v === '' || v === null || (Number.isInteger(Number(v)) && Number(v) >= 0)) || '必须为 0 或正整数']"
+                    hint="0=不限制；建议 10~30，降低同屏密度可显著改善播放流畅度"
+                    persistent-hint
+                    prepend-inner-icon="mdi-layers-triple-outline"
+                    :disabled="saving"
+                    density="compact"
+                    class="text-caption"
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6">
+                  <v-text-field
                     v-model.number="editableConfig.max_threads"
                     label="刮削并发数"
                     type="number"
@@ -441,8 +457,16 @@ const editableConfig = reactive({
   auto_scrape: true,
   enable_retry_task: true,
   screen_area: 'full',
+  max_same_screen: 0,
   enable_strm: true
 });
+
+// 同屏弹幕上限归一化：0=不限制，其余取非负整数（与后端 _clamp_max_same_screen 对齐）
+function normalizeMaxSameScreen(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
 
 const getPluginId = () => {
   return "Danmu";
@@ -483,6 +507,7 @@ async function loadInitialData() {
         auto_scrape: data.auto_scrape,
         enable_retry_task: data.enable_retry_task,
         screen_area: data.screen_area,
+        max_same_screen: normalizeMaxSameScreen(data.max_same_screen),
         enable_strm: data.enable_strm
       });
       initialConfigLoaded.value = true;
@@ -514,6 +539,7 @@ async function loadInitialData() {
         auto_scrape: props.initialConfig.auto_scrape,
         enable_retry_task: props.initialConfig.enable_retry_task,
         screen_area: props.initialConfig.screen_area,
+        max_same_screen: normalizeMaxSameScreen(props.initialConfig.max_same_screen),
         enable_strm: props.initialConfig.enable_strm
       });
     }
@@ -562,6 +588,7 @@ async function saveFullConfig() {
       auto_scrape: editableConfig.auto_scrape,
       enable_retry_task: editableConfig.enable_retry_task,
       screen_area: editableConfig.screen_area,
+      max_same_screen: normalizeMaxSameScreen(editableConfig.max_same_screen),
       enable_strm: editableConfig.enable_strm
     };
 
@@ -610,6 +637,7 @@ function resetConfigToFetched() {
       auto_scrape: serverFetchedConfig.auto_scrape,
       enable_retry_task: serverFetchedConfig.enable_retry_task,
       screen_area: serverFetchedConfig.screen_area,
+      max_same_screen: normalizeMaxSameScreen(serverFetchedConfig.max_same_screen),
       enable_strm: serverFetchedConfig.enable_strm
     });
     error.value = null;
@@ -639,6 +667,7 @@ onMounted(() => {
       auto_scrape: props.initialConfig.auto_scrape,
       enable_retry_task: props.initialConfig.enable_retry_task,
       screen_area: props.initialConfig.screen_area,
+      max_same_screen: normalizeMaxSameScreen(props.initialConfig.max_same_screen),
       enable_strm: props.initialConfig.enable_strm
     });
   }
