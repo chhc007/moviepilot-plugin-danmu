@@ -40,6 +40,7 @@
 cd plugins/danmu && python3 -m py_compile *.py        # 语法
 node node_modules/vite/bin/vite.js build              # 前端构建
 python3 ../tests/verify_v1_12_0.py                     # 真实联网三模式验证（需 requests/chardet）
+python3 ../tests/verify_v1_12_1.py                     # v1.12.1 滚动弹幕速度算法（36 项，含真实联网端到端）
 ```
 
 ## 维护方式（合并官方更新）
@@ -67,6 +68,7 @@ git checkout upstream/main -- plugins.v2/danmu
 
 ## 定制记录
 
+- v1.12.1 — 修复滚动弹幕速度算法：`\move` 终点与 `velocity` 文本宽度不一致（终点漏 0.6 系数 → 比实际文本宽度远 1.67 倍），导致滚动弹幕速度偏慢且随文本长度变化（观感「忽快忽慢」）。终点改为 `-text_width`，速度统一为 `(width+text_width)/duration`；顶/底弹幕与轨道逻辑不变
 - v1.12.0 — A+B+C 改造：A 放宽 /match 候选校验、B 关键词搜索兜底、C 新增 danmu_api 数据源；新增 data_source 等配置项与 Vue 联动；「优先B站」兼容 `[bilibili1]`
 - v1.11.0 — 初始导入官方版（无定制），建立私有市场分发仓库
 
@@ -74,3 +76,4 @@ git checkout upstream/main -- plugins.v2/danmu
 
 - **日剧匹配失败**：v1.12.0 起由 A（候选校验）/ B（关键词搜索）兜底解决，实测《非自然死亡》已可命中
 - **TMDB 兜底对日剧无效**：中转服务 `/search/tmdb` 未建立日剧的 TMDB→弹弹映射（动画正常），返回空数组
+- **旧 `.danmu.ass` 速度仍错**：v1.12.1 只改生成算法，已生成的弹幕文件需重新刮削才会应用新速度
