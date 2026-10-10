@@ -1355,7 +1355,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     @classmethod
     def convert_comments_to_ass(cls, comments: List[Dict], output_file: str, width: int, 
-                              height: int, fontface: str, fontsize: float, alpha: float, duration: float, screen_area: str = 'full'):
+                              height: int, fontface: str, fontsize: float, alpha: float, duration: float, screen_area: str = 'full',
+                              max_same_screen: int = 0):
         styleid = 'Danmu'
         
         # 根据屏幕区域计算有效高度和轨道数
@@ -1376,6 +1377,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         top_tracks = {}
         bottom_tracks = {}
         dropped_full = 0
+        # 同屏上限（v1.12.1）：0=不限制（默认，零回归）。记录当前活跃弹幕的离场时间，
+        # 超限的整条丢弃并单独计入 dropped_overflow（与轨道全满的 dropped_full 分开统计）。
+        max_same_screen = max(0, int(max_same_screen or 0))
+        active_end_times: List[float] = []
+        dropped_overflow = 0
 
         logger.info(f"{output_file} - 共匹配到{len(comments)}条弹幕。")
 
@@ -1399,6 +1405,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         
                     start_time = cls.convert_timestamp(timeline)
                     end_time = cls.convert_timestamp(timeline + duration)
+
+                    # 同屏上限：先剔除已结束（离场时间 <= 本条开始时间）的弹幕
+                    if max_same_screen > 0:
+                        active_end_times[:] = [t for t in active_end_times if t > timeline]
+                        if len(active_end_times) >= max_same_screen:
+                            dropped_overflow += 1
+                            continue
+                        active_end_times.append(timeline + duration)
                     
                     gap = 1
                     text_width = len(text) * fontsize * 0.6
@@ -1453,6 +1467,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 logger.info(
                     f"{dropped_full}/{len(comments)} 条弹幕因 {max_tracks} 条轨道全部占用被丢弃，"
                     f"可减小字体或扩大弹幕区域"
+                )
+            if dropped_overflow:
+                logger.info(
+                    f"{dropped_overflow}/{len(comments)} 条弹幕因同屏上限（{max_same_screen} 条）被丢弃，"
+                    f"可调高「同屏弹幕上限」或降低弹幕密度"
                 )
             logger.info('弹幕生成成功 - ' + output_file)
 
@@ -2112,7 +2131,8 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
                    data_source: str = "dandanplay", danmu_api_url: Optional[str] = None,
                    danmu_api_token: Optional[str] = None,
                    danmu_api_priority: bool = False,
-                   dandan_absent: bool = False) -> DanmuResult:
+                   dandan_absent: bool = False,
+                   max_same_screen: int = 0) -> DanmuResult:
     """
     生成弹幕文件。
 
@@ -2127,6 +2147,7 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
     :param danmu_api_priority: hybrid 模式下 danmu_api 是否优先
     :param manual_comment_id: 弹弹play 侧已定位的弹幕ID（手动匹配/整季命中）
     :param dandan_absent: 弹弹play 已确认无收录（整季查询结论），hybrid 下跳过该源
+    :param max_same_screen: 同屏弹幕上限（0=不限制，默认）。超出者整条丢弃，只影响新生成的 .ass
     """
     try:
         comment_id = None
@@ -2215,7 +2236,8 @@ def danmu_generator(file_path: str, width: int = 1920, height: int = 1080,
             fontsize=float(fontsize), 
             alpha=float(alpha), 
             duration=float(duration),
-            screen_area=screen_area
+            screen_area=screen_area,
+            max_same_screen=int(max_same_screen or 0)
         )
 
         # 处理字幕合并
