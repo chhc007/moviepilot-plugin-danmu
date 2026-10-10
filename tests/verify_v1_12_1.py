@@ -48,6 +48,15 @@ import danmu_generator as g  # noqa: E402
 RESULTS = []
 
 
+class _Capture:
+    """捕获 logger 输出用于校验汇总日志"""
+    def __init__(self): self.msgs = []
+    def info(self, msg, *a): self.msgs.append(str(msg))
+    def warning(self, msg, *a): self.msgs.append(str(msg))
+    def error(self, msg, *a): self.msgs.append(str(msg))
+    def debug(self, msg, *a): pass
+
+
 def check(name, ok, detail=""):
     RESULTS.append((name, ok, detail))
     print(f"  {'PASS' if ok else 'FAIL'}  {name}  {detail}")
@@ -62,14 +71,14 @@ def text_width_of(text):
     return len(text) * FONTSIZE * COEF
 
 
-def gen(comments, screen_area="full", duration=DURATION):
+def gen(comments, screen_area="full", duration=DURATION, max_same_screen=0):
     """调用 convert_comments_to_ass 生成 .ass，返回文件内容"""
     fd, path = tempfile.mkstemp(suffix=".ass", prefix="danmu_v1121_")
     os.close(fd)
     try:
         g.DanmuConverter.convert_comments_to_ass(
             comments, path, WIDTH, HEIGHT, FONTFACE, FONTSIZE, ALPHA,
-            duration, screen_area,
+            duration, screen_area, max_same_screen,
         )
         with open(path, encoding="utf-8") as f:
             return f.read()
@@ -84,6 +93,28 @@ DIALOGUE_RE = re.compile(
     r"Dialogue: 0,(?P<start>[^,]+),(?P<end>[^,]+),Danmu,,0,0,0,,(?P<body>.*)$"
 )
 MOVE_RE = re.compile(r"\\move\(([^)]*)\)")
+
+
+def to_sec(ts):
+    """ASS 时间戳 H:MM:SS.cc → 秒"""
+    h, mi, s = ts.split(":")
+    return int(h) * 3600 + int(mi) * 60 + float(s)
+
+
+def scan_peak(content):
+    """同屏峰值：半开区间 [start,end) 扫描线；同一时刻先处理 end（-1）再处理 start（+1）"""
+    ev = []
+    for line in content.splitlines():
+        m = DIALOGUE_RE.match(line)
+        if m:
+            ev.append((to_sec(m.group("start")), 1))
+            ev.append((to_sec(m.group("end")), -1))
+    ev.sort(key=lambda x: (x[0], x[1]))  # 同刻 -1 在前
+    cur = peak = 0
+    for _, d in ev:
+        cur += d
+        peak = max(peak, cur)
+    return peak
 
 
 def parse_dialogues(content):
@@ -274,9 +305,104 @@ try:
                 print(f"       样例: text={t0[:12]!r} len={len(t0)} "
                       f"\\move 终点={a0[2]:.1f} 期望={-tw0:.1f} "
                       f"速度={(a0[0]-a0[2])/DURATION:.1f} px/s")
+            # 端到端：真实数据叠加同屏上限，校验峰值 <= 上限
+            fd2, path2 = tempfile.mkstemp(suffix=".danmu.ass", prefix="e2e_cap_")
+            os.close(fd2)
+            g.DanmuConverter.convert_comments_to_ass(
+                comments, path2, WIDTH, HEIGHT, FONTFACE, FONTSIZE, ALPHA, DURATION, "full", 20,
+            )
+            content_cap = open(path2, encoding="utf-8").read()
+            kept_cap = content_cap.count("Dialogue:")
+            peak_cap = scan_peak(content_cap)
+            check("端到端（真实弹幕）同屏上限 20 → 峰值 <= 20", peak_cap <= 20, f"peak={peak_cap}")
+            # 与参考实现（raw 时间轴 replay）对比保留数，确认丢弃策略一致
+            raw_tls = sorted(float(str(c["p"]).split(",")[0]) for c in comments)
+            active, kept_ref = [], 0
+            for t in raw_tls:
+                active = [e for e in active if e > t]
+                if len(active) >= 20:
+                    continue
+                active.append(t + DURATION)
+                kept_ref += 1
+            check("端到端保留数与参考实现一致", kept_cap == kept_ref,
+                  f"ass={kept_cap} ref={kept_ref}")
+            print(f"       端到端同屏上限样例: {path2}（保留 {kept_cap} 条，峰值 {peak_cap}）")
             print(f"       .ass 路径: {path}")
 except Exception as e:  # 网络异常不应掩盖离线检查结果
     check("端到端联网生成", False, f"{type(e).__name__}: {e}")
+
+# ==========================================================================
+print("\n########## 7) max_same_screen=0（默认）：零回归，行为不变 ##########")
+# 稀疏弹幕（每条相隔 4s，duration=15 → 同屏约 4 条，远低于 20 轨道上限），
+# 确保不触发既有的轨道全满丢弃，从而纯粹检验 max_same_screen 默认不生效
+sparse = [{"p": f"{i * 4.0},1,16777215", "m": f"稀疏弹幕{i}"} for i in range(50)]
+c_default = gen(sparse)          # 不传 max_same_screen（默认 0）
+c_zero = gen(sparse, max_same_screen=0)
+n_default = len(parse_dialogues(c_default))
+n_zero = len(parse_dialogues(c_zero))
+check("默认（不传参）与显式 0 产出相同行数", n_default == n_zero, f"{n_default} vs {n_zero}")
+check("max_same_screen=0 不丢弃任何弹幕", n_zero == 50, f"{n_zero}/50")
+check("max_same_screen=0 内容与默认逐字节一致", c_default == c_zero)
+# 默认下不应出现「同屏上限」日志
+cap_d = _Capture()
+orig_logger = g.logger
+g.logger = cap_d
+try:
+    gen(sparse)
+finally:
+    g.logger = orig_logger
+check("默认下无「同屏上限」丢弃日志（零回归）",
+      not any("同屏上限" in m for m in cap_d.msgs), "; ".join(cap_d.msgs))
+
+# ==========================================================================
+print("\n########## 8) max_same_screen=20：同屏不超过 20 条 ##########")
+# 爆发式弹幕（50 条挤在 0.49s 内，duration=15）→ 同屏应被限制在 20。
+# 注意：此处 full 模式 max_tracks=20 恰好也=20，故用 quarter（max_tracks=5）区分，
+# 单独验证同屏上限本身；同时避免与轨道上限混淆。
+burst = [{"p": f"{i * 0.01},1,16777215", "m": f"爆发{i}"} for i in range(50)]
+
+
+c20 = gen(burst, max_same_screen=20)
+check("同屏上限 20 生效（50 条只留 20）", len(parse_dialogues(c20)) == 20,
+      f"{len(parse_dialogues(c20))}")
+check("任意时刻同屏峰值 <= 20", scan_peak(c20) <= 20, f"peak={scan_peak(c20)}")
+# 上限 10：更严格时只留 10
+c10 = gen(burst, max_same_screen=10)
+check("同屏上限 10 生效（50 条只留 10）", len(parse_dialogues(c10)) == 10,
+      f"{len(parse_dialogues(c10))}")
+
+# ==========================================================================
+print("\n########## 9) 丢弃数统计正确 + 与 dropped_full 分开统计 ##########")
+# 通过捕获 logger.info 的汇总日志来验证 dropped_overflow 计数
+cap = _Capture()
+orig_logger = g.logger
+g.logger = cap
+try:
+    gen(burst, max_same_screen=20)
+finally:
+    g.logger = orig_logger
+overflow_logs = [m for m in cap.msgs if "同屏上限" in m]
+full_logs = [m for m in cap.msgs if "轨道全部占用" in m]
+check("有「因同屏上限被丢弃」汇总日志", len(overflow_logs) == 1, "; ".join(overflow_logs))
+if overflow_logs:
+    mm = re.search(r"(\d+)/", overflow_logs[0])
+    dropped = int(mm.group(1)) if mm else -1
+    check("丢弃数 = 50 - 20 = 30", dropped == 30, f"dropped={dropped}")
+check("与 dropped_full（轨道全满）分开统计（此处无轨道全满日志）",
+      len(full_logs) == 0, "; ".join(full_logs))
+# 两者同时可能发生时各记各的：小 max_tracks + 小上限
+cap2 = _Capture()
+g.logger = cap2
+try:
+    # screen_area=quarter + fontsize 大 → max_tracks 很小；再叠加同屏上限
+    gen([{"p": f"{i * 0.05},1,16777215", "m": f"混合{i}"} for i in range(60)],
+        screen_area="quarter", max_same_screen=15)
+finally:
+    g.logger = orig_logger
+has_overflow = any("同屏上限" in m for m in cap2.msgs)
+has_full = any("轨道全部占用" in m for m in cap2.msgs)
+check("轨道全满与同屏上限各自独立出现（互不吞并）", has_full and has_overflow,
+      f"full={has_full} overflow={has_overflow}")
 
 # ==========================================================================
 print("\n" + "=" * 70)
