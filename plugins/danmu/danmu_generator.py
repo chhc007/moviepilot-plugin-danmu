@@ -1415,7 +1415,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                             continue  # 全部轨道占用，跳过避免重叠
                         scrolling_tracks[track_id] = timeline + leave_time
                         initial_y = (track_id - 1) * fontsize + 10
-                        styles = f'\\move({width}, {initial_y}, {-len(text)*fontsize}, {initial_y})'
+                        # 修复 v1.12.1：终点必须与上面的 text_width/velocity 用同一套文本宽度，
+                        # 否则实际行程比按 0.6 系数估算的文本宽度远 1/0.6≈1.67 倍，
+                        # 导致滚动弹幕实际速度偏慢且随文本长度变化（观感忽快忽慢）。
+                        end_x = -text_width
+                        styles = f'\\move({width}, {initial_y}, {end_x}, {initial_y})'
                     elif pos == 4:  # 底部弹幕
                         track_id = cls.find_non_overlapping_track(bottom_tracks, timeline, max_tracks)
                         if track_id is None:
