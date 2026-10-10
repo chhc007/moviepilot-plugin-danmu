@@ -65,6 +65,7 @@ class Danmu(_PluginBase):
     _danmu_api_priority = False
     _auto_scrape = True
     _screen_area = 'full'  # full(全屏), half(半屏), quarter(1/4屏)
+    _max_same_screen = 0  # 同屏弹幕上限（0=不限制），超出者丢弃；建议 10~30
     _enable_strm = True  # 是否启用.strm文件刮削
     # 新增重试相关配置
     _min_danmu_count = 100  # 最小弹幕数量要求 - 硬编码
@@ -429,6 +430,15 @@ class Danmu(_PluginBase):
             logger.warning(f"并发数配置无效({value})，使用默认值10")
             return 10
 
+    @staticmethod
+    def _clamp_max_same_screen(value: Any) -> int:
+        """同屏弹幕上限：0=不限制（默认，向后兼容），其余取非负整数"""
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            logger.warning(f"同屏弹幕上限配置无效({value})，使用默认值0（不限制）")
+            return 0
+
     def _apply_config(self, config: dict):
         """
         将配置字典写入内存属性（不含重试任务，重试任务只在加载时解析）
@@ -451,6 +461,7 @@ class Danmu(_PluginBase):
         self._auto_scrape = config.get("auto_scrape", False)
         self._enable_retry_task = config.get("enable_retry_task", True)
         self._screen_area = config.get("screen_area", "full")
+        self._max_same_screen = self._clamp_max_same_screen(config.get("max_same_screen", 0))
         self._enable_strm = config.get("enable_strm", True)
 
     def init_plugin(self, config: dict = None):
@@ -669,6 +680,7 @@ class Danmu(_PluginBase):
             "auto_scrape": self._auto_scrape,
             "enable_retry_task": self._enable_retry_task,
             "screen_area": self._screen_area,
+            "max_same_screen": self._max_same_screen,
             "enable_strm": self._enable_strm
         }
         
@@ -823,7 +835,8 @@ class Danmu(_PluginBase):
                 danmu_api_url=self._danmu_api_url,
                 danmu_api_token=self._danmu_api_token,
                 danmu_api_priority=self._danmu_api_priority,
-                dandan_absent=dandan_absent
+                dandan_absent=dandan_absent,
+                max_same_screen=self._max_same_screen
             )
             
             # 弹幕数量判断只能用服务端返回的数量（过滤前），
@@ -878,6 +891,10 @@ class Danmu(_PluginBase):
         # 升级不会让全库重刮（零回归）；切到 danmu_api/hybrid 才触发重生成
         if self._data_source != "dandanplay":
             signature["data_source"] = self._data_source
+        # 同理：max_same_screen 仅在非默认（>0）时计入，避免升级触发全库重刮；
+        # 用户一旦设置上限，存量 .ass 会按新上限重新生成
+        if self._max_same_screen:
+            signature["max_same_screen"] = self._max_same_screen
         return signature
 
     def _load_scrape_state(self):
