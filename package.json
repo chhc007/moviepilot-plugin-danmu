@@ -14,7 +14,7 @@
     "v3": false,
     "release": true,
     "history": {
-      "v1.12.1": "修复滚动弹幕速度算法 bug：convert_comments_to_ass 内文本宽度用了两套（velocity 含 0.6 系数、\\move 终点漏 0.6），终点比实际文本宽度远 1.67 倍，导致滚动弹幕速度偏慢且随文本长度变化（观感「忽快忽慢」）。现 \\move 终点改为 -text_width，与速度/离场时间同源：所有滚动弹幕速度统一为 (width+text_width)/duration，终点恰好让文本完整滑出屏幕左侧，不浪费行程。仅改一行，顶部/底部弹幕（\\pos）与轨道分配逻辑不变。duration=15 时约 128 px/s，需更快可调 duration。旧 .danmu.ass 需重新生成才生效。",
+      "v1.12.1": "修复滚动弹幕速度算法 bug（同一次转换里文本宽度算了两套：velocity 含 0.6 系数、\\move 终点漏 0.6，终点比实际文本宽度远 1.67 倍 → 滚动弹幕速度偏慢且随文本长度变化，观感「忽快忽慢」）；现 \\move 终点改为 -text_width，速度统一为 (width+text_width)/duration，终点恰好让文本完整滑出屏幕左侧。新增「同屏弹幕上限」配置 max_same_screen（默认 0=不限制，向后兼容；建议 10~30）：同一时刻最多保留 N 条弹幕，超出者整条丢弃并单独统计（与轨道全满的丢弃分开），实测樱花庄 E01 平均同屏 43.3/峰值 54 条，降低同屏密度可显著改善播放流畅度。仅影响新生成的 .ass；顶/底弹幕与轨道分配逻辑不变。",
       "v1.12.0": "新增数据源选择（dandanplay/danmu_api/hybrid）：A 放宽 /match 判定（isMatched=false 时按标题+集号校验候选，救回日剧）；B 关键词搜索兜底（hash/TMDB 都失败后走 /search/anime，日剧/国创主力）；C 集成 danmu_api 第二数据源（覆盖国剧/欧美剧/韩剧/真人电影/综艺）。新增 danmu_api_url/token/priority 配置项，Vue 按配置矩阵联动显隐；「优先B站」兼容 danmu_api 的 [bilibili1] 来源标签。默认 dandanplay 模式行为与 v1.11.0 完全一致。",
       "v1.11.0": "初始导入：弹幕刮削 v1.11.0（上游 HankunYu/MoviePilot-Plugins plugins.v2/danmu），暂无定制。"
     }

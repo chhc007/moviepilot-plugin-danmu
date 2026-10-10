@@ -27,6 +27,7 @@
 | `danmu_api_url` | danmu_api 服务地址（非 dandanplay 模式显示） | `http://192.168.123.146:9321` |
 | `danmu_api_token` | 自定义 TOKEN，留空则 URL 不带 token 段 | 空 |
 | `danmu_api_priority` | hybrid 模式下 danmu_api 是否优先 | false |
+| `max_same_screen` | 同屏弹幕上限（v1.12.1+）：同一时刻最多保留 N 条，超出丢弃；0=不限制，建议 10~30 | 0 |
 
 **匹配管线（改造后）**：手动匹配 → 整季查询 → `/match`（含 A 方案候选校验）→ TMDB → **B 关键词搜索兜底** → **C danmu_api 源**
 
@@ -40,7 +41,8 @@
 cd plugins/danmu && python3 -m py_compile *.py        # 语法
 node node_modules/vite/bin/vite.js build              # 前端构建
 python3 ../tests/verify_v1_12_0.py                     # 真实联网三模式验证（需 requests/chardet）
-python3 ../tests/verify_v1_12_1.py                     # v1.12.1 滚动弹幕速度算法（36 项，含真实联网端到端）
+python3 ../tests/verify_v1_12_1.py                     # v1.12.1 速度算法+同屏上限（49 项，含真实联网端到端）
+python3 ../tests/verify_v1_12_1_config.py              # v1.12.1 配置层 plumbing（16 项，stub 宿主）
 ```
 
 ## 维护方式（合并官方更新）
@@ -68,7 +70,7 @@ git checkout upstream/main -- plugins.v2/danmu
 
 ## 定制记录
 
-- v1.12.1 — 修复滚动弹幕速度算法：`\move` 终点与 `velocity` 文本宽度不一致（终点漏 0.6 系数 → 比实际文本宽度远 1.67 倍），导致滚动弹幕速度偏慢且随文本长度变化（观感「忽快忽慢」）。终点改为 `-text_width`，速度统一为 `(width+text_width)/duration`；顶/底弹幕与轨道逻辑不变
+- v1.12.1 — 修复滚动弹幕速度算法（`\move` 终点与 `velocity` 文本宽度不一致 → 速度偏慢且随长度变化）；新增「同屏弹幕上限」`max_same_screen`（默认 0=不限制，建议 10~30，超出者丢弃并单独统计）
 - v1.12.0 — A+B+C 改造：A 放宽 /match 候选校验、B 关键词搜索兜底、C 新增 danmu_api 数据源；新增 data_source 等配置项与 Vue 联动；「优先B站」兼容 `[bilibili1]`
 - v1.11.0 — 初始导入官方版（无定制），建立私有市场分发仓库
 
